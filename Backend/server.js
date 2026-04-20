@@ -23,7 +23,9 @@ const app = express()
 const PORT = process.env.PORT || 5000
 
 // Middleware
-app.use(helmet())
+app.use(helmet({
+  crossOriginResourcePolicy: false, // Allow cross-origin requests (Vercel → Render)
+}))
 // Allowed origins — includes production frontend URL from env
 const allowedOrigins = [
   'http://localhost:5173',
@@ -33,7 +35,9 @@ const allowedOrigins = [
 
 app.use(cors({
   origin: allowedOrigins,
-  credentials: true
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
 }))
 app.use(morgan('dev'))
 app.use(express.json())
