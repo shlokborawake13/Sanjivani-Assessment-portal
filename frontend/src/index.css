@@ -1,0 +1,185 @@
+@import "tailwindcss";
+
+@theme {
+  /* ── Primary Palette ── */
+  --color-primary: #00236f;
+  --color-primary-container: #1e3a8a;
+  --color-primary-fixed: #dce1ff;
+  --color-primary-fixed-dim: #b6c4ff;
+  --color-on-primary: #ffffff;
+
+  /* ── Secondary ── */
+  --color-secondary: #555d7e;
+  --color-secondary-container: #d0d8ff;
+
+  /* ── Accent (Amber) ── */
+  --color-accent: #f9bd22;
+  --color-accent-dim: #d9a300;
+  --color-accent-container: #533c00;
+
+  /* ── Surfaces ── */
+  --color-surface: #f8f9fa;
+  --color-surface-dim: #d9dadb;
+  --color-surface-bright: #f8f9fa;
+  --color-surface-lowest: #ffffff;
+  --color-surface-low: #f3f4f5;
+  --color-surface-mid: #edeeef;
+  --color-surface-high: #e7e8e9;
+  --color-surface-highest: #e1e3e4;
+
+  /* ── On Surface ── */
+  --color-on-surface: #191c1d;
+  --color-on-surface-variant: #444651;
+
+  /* ── Outline ── */
+  --color-outline: #757682;
+  --color-outline-variant: #c5c5d3;
+
+  /* ── Error ── */
+  --color-error: #ba1a1a;
+  --color-error-container: #ffdad6;
+  --color-on-error: #ffffff;
+
+  /* ── Inverse ── */
+  --color-inverse-surface: #2e3132;
+  --color-inverse-on-surface: #f0f1f2;
+  --color-inverse-primary: #b6c4ff;
+
+  /* ── Font ── */
+  --font-sans: 'Outfit', ui-sans-serif, system-ui, sans-serif;
+
+  /* ── Shadows ── */
+  --shadow-ambient: 0 12px 40px rgba(0, 35, 111, 0.04);
+  --shadow-ambient-lg: 0 20px 60px rgba(0, 35, 111, 0.06);
+  --shadow-ambient-sm: 0 4px 16px rgba(0, 35, 111, 0.03);
+}
+
+/* ── Base Resets ── */
+* { box-sizing: border-box; }
+
+html {
+  scroll-behavior: smooth;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  font-family: var(--font-sans);
+  color: var(--color-on-surface);
+  background: var(--color-surface);
+  line-height: 1.6;
+  margin: 0;
+}
+
+/* ── Glassmorphism Utilities ── */
+.glass {
+  background: rgba(248, 249, 250, 0.8);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+}
+
+.glass-dark {
+  background: rgba(0, 35, 111, 0.85);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+}
+
+/* ── Gradient Buttons ── */
+.btn-gradient {
+  background: linear-gradient(135deg, var(--color-primary) 0%, var(--color-primary-container) 100%);
+  color: var(--color-on-primary);
+  border: none;
+  cursor: pointer;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.btn-gradient:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 32px rgba(0, 35, 111, 0.18);
+}
+
+.btn-accent {
+  background: var(--color-accent);
+  color: var(--color-primary);
+  font-weight: 600;
+  border: none;
+  cursor: pointer;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.btn-accent:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 24px rgba(249, 189, 34, 0.3);
+}
+
+/* ── Scrollbar ── */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: var(--color-surface-low); }
+::-webkit-scrollbar-thumb {
+  background: var(--color-outline-variant);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover { background: var(--color-outline); }
+
+/* ── Animation Keyframes ── */
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes slide-in-left {
+  from { opacity: 0; transform: translateX(-20px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes pulse-soft {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+.animate-fade-in {
+  animation: fade-in 0.5s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+
+.animate-slide-in {
+  animation: slide-in-left 0.4s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+
+.animate-pulse-soft {
+  animation: pulse-soft 2s ease-in-out infinite;
+}
+
+/* ── Stagger children animations ── */
+.stagger-children > * {
+  opacity: 0;
+  animation: fade-in 0.5s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+.stagger-children > *:nth-child(1) { animation-delay: 0.05s; }
+.stagger-children > *:nth-child(2) { animation-delay: 0.1s; }
+.stagger-children > *:nth-child(3) { animation-delay: 0.15s; }
+.stagger-children > *:nth-child(4) { animation-delay: 0.2s; }
+.stagger-children > *:nth-child(5) { animation-delay: 0.25s; }
+.stagger-children > *:nth-child(6) { animation-delay: 0.3s; }
+
+/* ── Input Focus Styles ── */
+.input-minimal {
+  border: none;
+  border-bottom: 2px solid var(--color-outline-variant);
+  background: transparent;
+  padding: 12px 0;
+  font-size: 1rem;
+  font-family: var(--font-sans);
+  color: var(--color-on-surface);
+  width: 100%;
+  outline: none;
+  transition: border-color 0.3s, box-shadow 0.3s;
+}
+
+.input-minimal::placeholder {
+  color: var(--color-outline);
+}
+
+.input-minimal:focus {
+  border-bottom-color: var(--color-primary);
+  box-shadow: 0 2px 8px rgba(0, 35, 111, 0.08);
+}
