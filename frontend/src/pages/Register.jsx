@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import { ArrowRight, Upload, X, Camera, Eye, EyeOff, CheckCircle2, Mail } from 'lucide-react'
 import useAuthStore from '../store/authStore'
 
+const API_URL = import.meta.env.VITE_API_URL || '/api'
 const departments = [
   'AIDS',
   'AIML',
@@ -92,7 +93,7 @@ export default function Register() {
     setResending(true)
     setResendMsg('')
     try {
-      const response = await fetch('/api/auth/resend-verification', {
+      const response = await fetch(`${API_URL}/auth/resend-verification`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: registeredEmail })
@@ -131,7 +132,7 @@ export default function Register() {
         formData.append('profilePhoto', profilePhoto)
       }
 
-      const response = await fetch('/api/auth/register', {
+      const response = await fetch(`${API_URL}/auth/register`, {
         method: 'POST',
         body: formData // No Content-Type header — browser sets it with boundary
       })

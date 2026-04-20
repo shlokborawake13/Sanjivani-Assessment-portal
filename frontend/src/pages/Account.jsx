@@ -2,6 +2,7 @@ import { useState, useRef } from 'react'
 import { Save, User, Mail, Hash, Building2, Phone, Calendar, Layers, Camera, Upload, X, CheckCircle2, Lock } from 'lucide-react'
 import useAuthStore from '../store/authStore'
 
+const API_URL = import.meta.env.VITE_API_URL || '/api'
 const departments = [
   'AIDS', 'AIML', 'CSE', 'CY', 'BBA', 'MBA',
   'B.COM', 'I.B-Tech', 'I.M-Tech', 'BCA/MCA',
@@ -61,7 +62,7 @@ export default function Account() {
       const sessionStr = localStorage.getItem('sanjivani_session')
       const session = sessionStr ? JSON.parse(sessionStr) : null
 
-      const response = await fetch('/api/profile', {
+      const response = await fetch(`${API_URL}/profile`, {
         method: 'PUT',
         headers: session ? { Authorization: `Bearer ${session.access_token}` } : {},
         body: formData

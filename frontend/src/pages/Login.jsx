@@ -3,6 +3,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { Eye, EyeOff, ArrowRight, CheckCircle2, Mail } from 'lucide-react'
 import useAuthStore from '../store/authStore'
 
+const API_URL = import.meta.env.VITE_API_URL || '/api'
 export default function Login() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -25,7 +26,7 @@ export default function Login() {
     setResending(true)
     setResendMsg('')
     try {
-      const response = await fetch('/api/auth/resend-verification', {
+      const response = await fetch(`${API_URL}/auth/resend-verification`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: verificationEmail })
