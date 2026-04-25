@@ -17,6 +17,12 @@ import managerRoutes from './routes/manager.js'
 import attemptsRoutes from './routes/attempts.js'
 import leaderboardRoutes from './routes/leaderboard.js'
 import activityRoutes from './routes/activity.js'
+import aptitudeRoutes from './routes/aptitude.js'
+import codingRoutes from './routes/coding.js'
+import communicationRoutes from './routes/communication.js'
+import proctoringRoutes, { startHeartbeatMonitor } from './routes/proctoring.js'
+import technicalRoutes from './routes/technical.js'
+import { securityHeaders } from './middleware/securityHeaders.js'
 import { verifySmtp } from './config/mailer.js'
 
 const app = express()
@@ -40,7 +46,8 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization']
 }))
 app.use(morgan('dev'))
-app.use(express.json())
+app.use(express.json({ limit: '10mb' })) // Allow larger payloads for CSV uploads
+app.use(securityHeaders())
 
 // Health check
 app.get('/api/health', (req, res) => {
@@ -59,6 +66,11 @@ app.use('/api/manager', managerRoutes)
 app.use('/api/attempts', attemptsRoutes)
 app.use('/api/leaderboard', leaderboardRoutes)
 app.use('/api/activity', activityRoutes)
+app.use('/api/aptitude', aptitudeRoutes)
+app.use('/api/coding', codingRoutes)
+app.use('/api/communication', communicationRoutes)
+app.use('/api/proctoring', proctoringRoutes)
+app.use('/api/technical', technicalRoutes)
 
 // Global error handler
 app.use((err, req, res, next) => {
@@ -74,6 +86,9 @@ app.use((req, res) => {
 app.listen(PORT, async () => {
   console.log(`🚀 Sanjivani API running on http://localhost:${PORT}`)
   await verifySmtp()
+  // Start server-side heartbeat monitor for proctored exams
+  startHeartbeatMonitor()
+  console.log('🔒 Proctoring heartbeat monitor started')
 })
 
 export default app

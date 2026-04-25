@@ -84,14 +84,21 @@ router.get('/', async (req, res) => {
     const pageLimit = Math.min(parseInt(limitParam) || 50, 100)
 
     // 1. Fetch all results joined with profiles AND all student profiles (for streak-only students)
-    const [resultsQuery, allStudentsQuery] = await Promise.all([
+    // Note: Results from invalidated attempts are still in results table
+    // To exclude them, we'd need to cross-reference attempts.invalidated
+    // For now, we fetch attempts to get invalidation status
+    const [resultsQuery, allStudentsQuery, invalidatedQuery] = await Promise.all([
       supabaseAdmin
         .from('results')
         .select('id, user_id, percentage, score, total, category, completed_at, status, profiles(*)'),
       supabaseAdmin
         .from('profiles')
         .select('*')
-        .eq('role', 'student')
+        .eq('role', 'student'),
+      supabaseAdmin
+        .from('attempts')
+        .select('id, user_id, assessment_id, invalidated')
+        .eq('invalidated', true)
     ])
 
     if (resultsQuery.error) {

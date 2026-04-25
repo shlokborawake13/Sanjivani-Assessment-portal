@@ -236,4 +236,396 @@ router.get('/results', async (req, res) => {
   }
 })
 
+// ─── POST /api/admin/attempts/:id/reset — Reset/invalidate a student attempt ───
+router.post('/attempts/:id/reset', async (req, res) => {
+  try {
+    const { reason } = req.body
+    if (!reason || reason.trim().length < 3) {
+      return res.status(400).json({ error: 'A reason is required (min 3 characters)' })
+    }
+
+    // Fetch the attempt
+    const { data: attempt, error: fetchErr } = await supabaseAdmin
+      .from('attempts')
+      .select('id, user_id, assessment_id, status, invalidated')
+      .eq('id', req.params.id)
+      .maybeSingle()
+
+    if (fetchErr || !attempt) return res.status(404).json({ error: 'Attempt not found' })
+    if (attempt.invalidated) return res.status(400).json({ error: 'Attempt already invalidated' })
+
+    // Mark attempt as invalidated
+    const { error: updateErr } = await supabaseAdmin
+      .from('attempts')
+      .update({
+        invalidated: true,
+        invalidated_by: req.user.id,
+        invalidated_reason: reason.trim(),
+        invalidated_at: new Date().toISOString()
+      })
+      .eq('id', req.params.id)
+
+    if (updateErr) return res.status(400).json({ error: updateErr.message })
+
+    // Log the reset action (non-fatal)
+    try {
+      await supabaseAdmin
+        .from('attempt_reset_logs')
+        .insert({
+          attempt_id: attempt.id,
+          admin_id: req.user.id,
+          student_id: attempt.user_id,
+          exam_id: attempt.assessment_id,
+          reason: reason.trim(),
+          action: 'reset'
+        })
+    } catch (logErr) {
+      console.error('Reset log insert error (non-fatal):', logErr.message)
+    }
+
+    res.json({
+      message: 'Attempt invalidated successfully. Student can now re-attempt.',
+      attempt_id: attempt.id
+    })
+  } catch (err) {
+    console.error('Reset attempt error:', err)
+    res.status(500).json({ error: 'Failed to reset attempt' })
+  }
+})
+
+// ─── GET /api/admin/attempts — List all attempts with filters ───
+router.get('/attempts', async (req, res) => {
+  try {
+    const { assessment_id, status, include_invalidated } = req.query
+
+    let query = supabaseAdmin
+      .from('attempts')
+      .select('*, assessments(title, category), profiles(name, email, prn, department, year, section)')
+      .order('created_at', { ascending: false })
+      .limit(500)
+
+    if (assessment_id) query = query.eq('assessment_id', assessment_id)
+    if (status) query = query.eq('status', status)
+    if (include_invalidated !== 'true') query = query.eq('invalidated', false)
+
+    const { data, error } = await query
+    if (error) return res.status(400).json({ error: error.message })
+    res.json({ attempts: data })
+  } catch (err) {
+    console.error('Admin list attempts error:', err)
+    res.status(500).json({ error: 'Failed to fetch attempts' })
+  }
+})
+
+// ─── GET /api/admin/attempts/reset-logs — View reset history ───
+router.get('/attempts/reset-logs', async (req, res) => {
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('attempt_reset_logs')
+      .select('*, profiles!attempt_reset_logs_admin_id_fkey(name, email)')
+      .order('created_at', { ascending: false })
+      .limit(100)
+
+    if (error) return res.status(400).json({ error: error.message })
+    res.json({ logs: data })
+  } catch (err) {
+    console.error('Reset logs error:', err)
+    res.status(500).json({ error: 'Failed to fetch reset logs' })
+  }
+})
+
+// ─── GET /api/admin/violations — List all violations with filters ───
+router.get('/violations', async (req, res) => {
+  try {
+    const { assessment_id, severity, type, student_id, limit: limitParam } = req.query
+    const pageLimit = Math.min(parseInt(limitParam) || 100, 500)
+
+    let query = supabaseAdmin
+      .from('violations')
+      .select('*, attempts(user_id, assessment_id, status, profiles(name, email, prn, department), assessments(title, category, assessment_type))')
+      .order('created_at', { ascending: false })
+      .limit(pageLimit)
+
+    if (severity) query = query.eq('severity', severity)
+    if (type) query = query.eq('type', type)
+
+    const { data, error } = await query
+    if (error) return res.status(400).json({ error: error.message })
+
+    let violations = data || []
+
+    // Post-query filters for nested fields
+    if (assessment_id) {
+      violations = violations.filter(v => v.attempts?.assessment_id === assessment_id)
+    }
+    if (student_id) {
+      violations = violations.filter(v => v.attempts?.user_id === student_id)
+    }
+
+    // Summary stats
+    const summary = {
+      total: violations.length,
+      by_severity: { minor: 0, major: 0, critical: 0 },
+      by_source: { client: 0, server: 0 },
+      by_type: {}
+    }
+    violations.forEach(v => {
+      summary.by_severity[v.severity || 'minor'] = (summary.by_severity[v.severity || 'minor'] || 0) + 1
+      summary.by_source[v.source || 'client'] = (summary.by_source[v.source || 'client'] || 0) + 1
+      summary.by_type[v.type] = (summary.by_type[v.type] || 0) + 1
+    })
+
+    res.json({ violations, summary })
+  } catch (err) {
+    console.error('Admin violations error:', err)
+    res.status(500).json({ error: 'Failed to fetch violations' })
+  }
+})
+
+// ─── GET /api/admin/proctoring/:attemptId — Detailed proctoring log ───
+router.get('/proctoring/:attemptId', async (req, res) => {
+  try {
+    const { attemptId } = req.params
+
+    const [sessionRes, violationsRes, attemptRes] = await Promise.all([
+      supabaseAdmin
+        .from('proctoring_sessions')
+        .select('*')
+        .eq('attempt_id', attemptId)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle(),
+      supabaseAdmin
+        .from('violations')
+        .select('*')
+        .eq('attempt_id', attemptId)
+        .order('created_at', { ascending: true }),
+      supabaseAdmin
+        .from('attempts')
+        .select('*, profiles(name, email, prn, department), assessments(title, category, assessment_type)')
+        .eq('id', attemptId)
+        .maybeSingle()
+    ])
+
+    res.json({
+      proctoring_session: sessionRes.data || null,
+      violations: violationsRes.data || [],
+      attempt: attemptRes.data || null,
+      violation_count: (violationsRes.data || []).length,
+      violation_summary: {
+        by_type: (violationsRes.data || []).reduce((acc, v) => {
+          acc[v.type] = (acc[v.type] || 0) + 1
+          return acc
+        }, {}),
+        by_severity: (violationsRes.data || []).reduce((acc, v) => {
+          acc[v.severity || 'minor'] = (acc[v.severity || 'minor'] || 0) + 1
+          return acc
+        }, {})
+      }
+    })
+  } catch (err) {
+    console.error('Admin proctoring error:', err)
+    res.status(500).json({ error: 'Failed to fetch proctoring details' })
+  }
+})
+
+// ─── GET /api/admin/assessments/:id/stats — Assessment statistics ───
+router.get('/assessments/:id/stats', async (req, res) => {
+  try {
+    const assessmentId = req.params.id
+
+    // Fetch assessment
+    const { data: assessment } = await supabaseAdmin
+      .from('assessments')
+      .select('*')
+      .eq('id', assessmentId)
+      .maybeSingle()
+
+    if (!assessment) return res.status(404).json({ error: 'Assessment not found' })
+
+    // Fetch all attempts for this assessment
+    const { data: attempts } = await supabaseAdmin
+      .from('attempts')
+      .select('*, profiles(name, email, prn, department, year, section)')
+      .eq('assessment_id', assessmentId)
+      .eq('invalidated', false)
+      .order('created_at', { ascending: false })
+
+    const allAttempts = attempts || []
+
+    // Calculate stats
+    const submitted = allAttempts.filter(a => a.status === 'submitted' || a.status === 'auto_submitted')
+    const inProgress = allAttempts.filter(a => a.status === 'in_progress')
+    const passed = submitted.filter(a => a.percentage >= (assessment.passing_marks || 50))
+    const failed = submitted.filter(a => a.percentage < (assessment.passing_marks || 50))
+
+    const scores = submitted.map(a => a.percentage || 0)
+    const avgScore = scores.length > 0 ? Math.round(scores.reduce((s, x) => s + x, 0) / scores.length) : 0
+    const highestScore = scores.length > 0 ? Math.max(...scores) : 0
+    const lowestScore = scores.length > 0 ? Math.min(...scores) : 0
+
+    // Score distribution (0-20, 20-40, 40-60, 60-80, 80-100)
+    const distribution = [0, 0, 0, 0, 0]
+    scores.forEach(s => {
+      if (s < 20) distribution[0]++
+      else if (s < 40) distribution[1]++
+      else if (s < 60) distribution[2]++
+      else if (s < 80) distribution[3]++
+      else distribution[4]++
+    })
+
+    // Top scorers
+    const topScorers = submitted
+      .sort((a, b) => (b.percentage || 0) - (a.percentage || 0))
+      .slice(0, 10)
+      .map(a => ({
+        name: a.profiles?.name || 'Unknown',
+        email: a.profiles?.email,
+        prn: a.profiles?.prn,
+        department: a.profiles?.department,
+        score: a.score,
+        total: a.total,
+        percentage: a.percentage,
+        status: a.percentage >= (assessment.passing_marks || 50) ? 'passed' : 'failed',
+        submitted_at: a.submitted_at || a.created_at,
+        submission_reason: a.submission_reason,
+      }))
+
+    // Per-student data
+    const studentData = allAttempts.map(a => ({
+      id: a.id,
+      student_name: a.profiles?.name || 'Unknown',
+      email: a.profiles?.email,
+      prn: a.profiles?.prn,
+      department: a.profiles?.department,
+      year: a.profiles?.year,
+      section: a.profiles?.section,
+      score: a.score,
+      total: a.total,
+      percentage: a.percentage,
+      status: a.status,
+      result_status: a.status === 'in_progress' ? 'in_progress'
+        : (a.percentage >= (assessment.passing_marks || 50) ? 'passed' : 'failed'),
+      violation_count: a.violation_count || 0,
+      submission_reason: a.submission_reason || '',
+      auto_submitted: a.auto_submitted || false,
+      started_at: a.start_time || a.created_at,
+      submitted_at: a.submitted_at,
+    }))
+
+    res.json({
+      assessment: {
+        id: assessment.id,
+        title: assessment.title,
+        category: assessment.category,
+        total_marks: assessment.total_marks,
+        passing_marks: assessment.passing_marks,
+        max_attempts: assessment.max_attempts,
+        duration_minutes: assessment.duration_minutes,
+      },
+      stats: {
+        total_attempts: allAttempts.length,
+        submitted_count: submitted.length,
+        in_progress_count: inProgress.length,
+        passed_count: passed.length,
+        failed_count: failed.length,
+        pass_rate: submitted.length > 0 ? Math.round((passed.length / submitted.length) * 100) : 0,
+        avg_score: avgScore,
+        highest_score: highestScore,
+        lowest_score: lowestScore,
+        score_distribution: {
+          '0-20': distribution[0],
+          '20-40': distribution[1],
+          '40-60': distribution[2],
+          '60-80': distribution[3],
+          '80-100': distribution[4],
+        }
+      },
+      top_scorers: topScorers,
+      students: studentData,
+    })
+  } catch (err) {
+    console.error('Assessment stats error:', err)
+    res.status(500).json({ error: 'Failed to fetch assessment stats' })
+  }
+})
+
+// ─── GET /api/admin/assessments/:id/export-csv — Export results as CSV ───
+router.get('/assessments/:id/export-csv', async (req, res) => {
+  try {
+    const assessmentId = req.params.id
+
+    // Fetch assessment
+    const { data: assessment } = await supabaseAdmin
+      .from('assessments')
+      .select('title, category, total_marks, passing_marks')
+      .eq('id', assessmentId)
+      .maybeSingle()
+
+    if (!assessment) return res.status(404).json({ error: 'Assessment not found' })
+
+    // Fetch all attempts
+    const { data: attempts } = await supabaseAdmin
+      .from('attempts')
+      .select('*, profiles(name, email, prn, department, year, section)')
+      .eq('assessment_id', assessmentId)
+      .eq('invalidated', false)
+      .order('created_at', { ascending: false })
+
+    const allAttempts = attempts || []
+
+    // Build CSV
+    const headers = [
+      'Student Name', 'Email', 'PRN', 'Department', 'Year', 'Section',
+      'Score', 'Total Marks', 'Percentage', 'Status', 'Result',
+      'Violations', 'Auto-Submitted', 'Submission Reason',
+      'Started At', 'Submitted At'
+    ]
+
+    const rows = allAttempts.map(a => {
+      const passingMarks = assessment.passing_marks || 50
+      const resultStatus = a.status === 'in_progress' ? 'In Progress'
+        : (a.percentage >= passingMarks ? 'Passed' : 'Failed')
+
+      return [
+        escapeCSV(a.profiles?.name || ''),
+        escapeCSV(a.profiles?.email || ''),
+        escapeCSV(a.profiles?.prn || ''),
+        escapeCSV(a.profiles?.department || ''),
+        escapeCSV(a.profiles?.year || ''),
+        escapeCSV(a.profiles?.section || ''),
+        a.score ?? '',
+        a.total ?? '',
+        a.percentage != null ? `${a.percentage}%` : '',
+        a.status || '',
+        resultStatus,
+        a.violation_count || 0,
+        a.auto_submitted ? 'Yes' : 'No',
+        escapeCSV(a.submission_reason || ''),
+        a.start_time || a.created_at || '',
+        a.submitted_at || '',
+      ].join(',')
+    })
+
+    const csvContent = [headers.join(','), ...rows].join('\n')
+
+    // Set response headers for CSV download
+    const filename = `${(assessment.title || 'assessment').replace(/[^a-zA-Z0-9]/g, '_')}_results.csv`
+    res.setHeader('Content-Type', 'text/csv')
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`)
+    res.send(csvContent)
+  } catch (err) {
+    console.error('Export CSV error:', err)
+    res.status(500).json({ error: 'Failed to export CSV' })
+  }
+})
+
+function escapeCSV(str) {
+  if (typeof str !== 'string') return str
+  if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+    return `"${str.replace(/"/g, '""')}"`
+  }
+  return str
+}
+
 export default router

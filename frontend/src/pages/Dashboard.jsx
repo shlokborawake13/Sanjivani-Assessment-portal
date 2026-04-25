@@ -123,7 +123,12 @@ export default function Dashboard() {
               <p className="text-sm text-on-surface-variant leading-relaxed mb-5">{practiceOfTheDay.description}</p>
               <button
                 onClick={() => {
-                  if (practiceOfTheDay.id) navigate(`/assessment/${practiceOfTheDay.id}/take`)
+                  if (practiceOfTheDay.id) {
+                    const cat = (practiceOfTheDay.category || '').toLowerCase()
+                    if (cat === 'coding') navigate(`/assessment/${practiceOfTheDay.id}/code`)
+                    else if (cat === 'communication') navigate(`/assessment/${practiceOfTheDay.id}/communicate`)
+                    else navigate(`/assessment/${practiceOfTheDay.id}/take`)
+                  }
                   else navigate('/assessments/aptitude')
                 }}
                 className="btn-gradient px-5 py-2.5 rounded-[10px] text-sm font-medium flex items-center gap-2 group"

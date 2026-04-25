@@ -22,6 +22,7 @@ const adminLinks = [
   { label: 'Home', path: '/dashboard' },
   { label: 'Users', path: '/users' },
   { label: 'Assessments', path: '/assessments' },
+  { label: 'Attempts', path: '/admin/attempts' },
   { label: 'Announcements', path: '/announcements' },
   { label: 'Leaderboard', path: '/leaderboard' },
   { label: 'Support', path: '/admin/support' },

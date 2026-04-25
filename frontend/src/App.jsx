@@ -23,6 +23,7 @@ const TakeAssessment = lazy(() => import('./pages/TakeAssessment'))
 const CodingAssessment = lazy(() => import('./pages/CodingAssessment'))
 const CommunicationTest = lazy(() => import('./pages/CommunicationTest'))
 const LeaderboardPage = lazy(() => import('./pages/LeaderboardPage'))
+const AssessmentBrowser = lazy(() => import('./pages/AssessmentBrowser'))
 
 // Admin pages
 const AdminDashboard = lazy(() => import('./pages/AdminDashboard'))
@@ -30,6 +31,7 @@ const AdminUsers = lazy(() => import('./pages/AdminUsers'))
 const AdminAssessments = lazy(() => import('./pages/AdminAssessments'))
 const AdminAnnouncements = lazy(() => import('./pages/AdminAnnouncements'))
 const AdminSupport = lazy(() => import('./pages/AdminSupport'))
+const AdminAttempts = lazy(() => import('./pages/AdminAttempts'))
 
 // Manager pages
 const ManagerDashboard = lazy(() => import('./pages/ManagerDashboard'))
@@ -92,6 +94,9 @@ export default function App() {
           <Route path="/assessments/:category" element={
             <ProtectedRoute allowedRoles={['student']}><AssessmentDetail /></ProtectedRoute>
           } />
+          <Route path="/browse" element={
+            <ProtectedRoute allowedRoles={['student']}><AssessmentBrowser /></ProtectedRoute>
+          } />
 
           {/* Admin pages */}
           <Route path="/users" element={
@@ -105,6 +110,9 @@ export default function App() {
           } />
           <Route path="/admin/support" element={
             <ProtectedRoute allowedRoles={['admin']}><AdminSupport /></ProtectedRoute>
+          } />
+          <Route path="/admin/attempts" element={
+            <ProtectedRoute allowedRoles={['admin']}><AdminAttempts /></ProtectedRoute>
           } />
 
           {/* Manager pages */}

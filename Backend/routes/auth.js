@@ -113,6 +113,7 @@ router.post('/register', upload.single('profilePhoto'), async (req, res) => {
       department,
       year,
       division: division.trim(),
+      section: division.trim(), // section = division for target audience filtering
       profile_url: profileUrl,
       role: 'student'
     }

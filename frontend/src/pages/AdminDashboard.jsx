@@ -107,7 +107,7 @@ export default function AdminDashboard() {
   const cards = [
     { label: 'Total Users', value: stats?.totalUsers || 0, icon: Users, color: '#1e3a8a', sub: `${stats?.totalStudents || 0} students, ${stats?.totalManagers || 0} managers`, to: '/users' },
     { label: 'Assessments', value: stats?.totalAssessments || 0, icon: ClipboardList, color: '#00236f', sub: `${stats?.activeAssessments || 0} active`, to: '/assessments' },
-    { label: 'Total Results', value: stats?.totalResults || 0, icon: BarChart3, color: '#166534', sub: `Avg ${stats?.avgScore || 0}%, Pass rate ${stats?.passRate || 0}%`, to: null },
+    { label: 'Total Results', value: stats?.totalResults || 0, icon: BarChart3, color: '#166534', sub: `Avg ${stats?.avgScore || 0}%, Pass rate ${stats?.passRate || 0}%`, to: '/admin/attempts' },
     { label: 'Support Tickets', value: stats?.totalTickets || 0, icon: HeadphonesIcon, color: '#533c00', sub: `${stats?.openTickets || 0} open`, to: '/admin/support' },
   ]
 

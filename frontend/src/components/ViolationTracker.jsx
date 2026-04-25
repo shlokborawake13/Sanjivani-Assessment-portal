@@ -1,90 +1,141 @@
-import { useState, useCallback, useRef } from 'react'
-import { AlertTriangle, X } from 'lucide-react'
+import { useEffect, useRef, useState, useCallback } from 'react'
+import { AlertTriangle, EyeOff } from 'lucide-react'
 import api from '../services/api'
 
 /**
- * ViolationTracker — Central state manager for all violations.
- * Shows warning modals, tracks counts, triggers auto-submit.
+ * ViolationTracker — Centralized violation detection and reporting.
+ * 
+ * Supports TWO usage patterns:
+ * 1. Render Props: <ViolationTracker>{({ logViolation }) => ... }</ViolationTracker>
+ * 2. Component:    <ViolationTracker onViolation={fn}><Child/></ViolationTracker>
+ * 
+ * Monitors:
+ * - Tab switching (visibilitychange)
+ * - Window blur (alt-tab, other windows)
+ * - Reports ALL events to the server for backend enforcement
+ * 
+ * Backend is the source of truth for violation counts and auto-submit.
  */
-export default function ViolationTracker({ attemptId, onAutoSubmit, children }) {
-  const [warning, setWarning] = useState(null)
-  const [violations, setViolations] = useState([])
-  const violationCounts = useRef({})
-  const autoSubmitted = useRef(false)
+export default function ViolationTracker({
+  enabled = true,
+  attemptId,
+  maxWarnings = 3,
+  onAutoSubmit,
+  onViolation,
+  showWarning = true,
+  children,
+}) {
+  const [warningCount, setWarningCount] = useState(0)
+  const [showBanner, setShowBanner] = useState(false)
+  const [lastViolation, setLastViolation] = useState(null)
+  const cooldownRef = useRef(false)
 
   const logViolation = useCallback(async (type, details) => {
-    if (autoSubmitted.current) return
+    if (!enabled || cooldownRef.current) return
 
-    // Track per-type count
-    violationCounts.current[type] = (violationCounts.current[type] || 0) + 1
-    const count = violationCounts.current[type]
+    // Cooldown to prevent spam
+    cooldownRef.current = true
+    setTimeout(() => { cooldownRef.current = false }, 2000)
 
-    const violation = { type, details, timestamp: new Date().toISOString(), count }
-    setViolations(prev => [...prev, violation])
+    setWarningCount(prev => prev + 1)
+    setLastViolation({ type, details, time: new Date() })
+    if (showWarning) setShowBanner(true)
 
-    // Log to backend
+    // Report to parent
+    onViolation?.(type, details)
+
+    // Report to backend
     if (attemptId) {
       try {
-        await api.post(`/attempts/${attemptId}/violation`, { type, details })
+        await api.post(`/proctoring/${attemptId}/face-event`, {
+          event_type: type,
+          details: details,
+        })
       } catch (err) {
-        console.error('Failed to log violation:', err)
+        // Non-fatal — also try legacy endpoint
+        try {
+          await api.post(`/attempts/${attemptId}/violation`, {
+            type, details,
+          })
+        } catch (e) {
+          // Ignore
+        }
       }
     }
 
-    // Determine warning message
-    const warningMessages = {
-      tab_switch: 'Tab switching detected. This is your final warning.',
-      fullscreen_exit: 'Full screen mode is required. Please stay in fullscreen.',
-      paste_attempt: 'Pasting is not allowed in this assessment.',
-      copy_attempt: 'Copying is not allowed during the assessment.',
-      face_detection: 'Please look at the screen to continue.',
-      devtools: 'Developer tools detected. This is a violation.',
-      right_click: 'Right-click is disabled during assessments.',
-    }
+    // Auto-dismiss banner after 3 seconds
+    setTimeout(() => setShowBanner(false), 3000)
+  }, [enabled, attemptId, onViolation, showWarning])
 
-    // Show warning on first violation of this type
-    if (count === 1) {
-      setWarning({
-        type,
-        message: warningMessages[type] || `Violation detected: ${type}`,
-        severity: 'warning'
-      })
-      setTimeout(() => setWarning(null), 4000)
-    }
+  useEffect(() => {
+    if (!enabled) return
 
-    // Auto-submit on second violation for critical types
-    const criticalTypes = ['tab_switch', 'fullscreen_exit', 'face_detection', 'paste_attempt']
-    if (count >= 2 && criticalTypes.includes(type) && !autoSubmitted.current) {
-      autoSubmitted.current = true
-      const reasons = {
-        tab_switch: 'Tab switching violation',
-        fullscreen_exit: 'Fullscreen exit violation',
-        face_detection: 'Face not detected',
-        paste_attempt: 'Paste attempt detected'
+    function handleVisibilityChange() {
+      if (document.hidden) {
+        logViolation('tab_switch', 'Tab focus lost (visibilitychange)')
       }
-      if (onAutoSubmit) onAutoSubmit(reasons[type] || `${type} violation`)
     }
-  }, [attemptId, onAutoSubmit])
 
-  const dismissWarning = useCallback(() => setWarning(null), [])
+    function handleBlur() {
+      logViolation('window_blur', 'Window lost focus (blur event)')
+    }
+
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    window.addEventListener('blur', handleBlur)
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+      window.removeEventListener('blur', handleBlur)
+    }
+  }, [enabled, logViolation])
+
+  // Check against threshold
+  useEffect(() => {
+    if (warningCount >= maxWarnings && warningCount > 0) {
+      onAutoSubmit?.(`Tab switch/blur violations exceeded (${warningCount}/${maxWarnings})`)
+    }
+  }, [warningCount, maxWarnings, onAutoSubmit])
+
+  // Determine render mode: render-props or regular children
+  const isRenderProps = typeof children === 'function'
 
   return (
     <>
-      {/* Warning Banner */}
-      {warning && (
-        <div className="fixed top-0 left-0 right-0 z-[9999] flex justify-center pt-4 px-4 animate-fade-in">
-          <div className="flex items-center gap-3 bg-[#fef2f2] border border-[#fca5a5] rounded-xl px-5 py-3 shadow-lg max-w-lg">
-            <AlertTriangle size={18} className="text-error shrink-0" />
-            <p className="text-sm font-medium text-error flex-1">{warning.message}</p>
-            <button onClick={dismissWarning} className="p-1 hover:bg-error/10 rounded-lg transition-colors">
-              <X size={14} className="text-error" />
-            </button>
+      {/* Warning banner */}
+      {enabled && showWarning && showBanner && (
+        <div className="fixed top-0 left-0 right-0 z-[9990] animate-slide-down">
+          <div className="bg-gradient-to-r from-red-600/95 to-orange-600/95 backdrop-blur-sm px-4 py-3 text-center">
+            <div className="flex items-center justify-center gap-2">
+              <AlertTriangle size={16} className="text-white" />
+              <span className="text-white text-sm font-semibold">
+                ⚠️ Warning {warningCount}/{maxWarnings}: {lastViolation?.details || 'Violation detected'}
+              </span>
+            </div>
+            <p className="text-white/70 text-xs mt-1">
+              {warningCount >= maxWarnings - 1
+                ? 'Next violation will auto-submit your exam!'
+                : 'Your activity is being monitored. Do not switch tabs.'}
+            </p>
           </div>
         </div>
       )}
 
-      {/* Pass logViolation to children via render prop */}
-      {typeof children === 'function' ? children({ logViolation, violations }) : children}
+      {/* Persistent violation counter */}
+      {enabled && warningCount > 0 && (
+        <div className="fixed bottom-4 right-4 z-[9990]">
+          <div className={`flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-semibold ${
+            warningCount >= maxWarnings - 1
+              ? 'bg-red-500/20 border border-red-500/30 text-red-400'
+              : 'bg-amber-500/10 border border-amber-500/20 text-amber-400'
+          }`}>
+            <EyeOff size={12} />
+            <span>{warningCount}/{maxWarnings} violations</span>
+          </div>
+        </div>
+      )}
+
+      {/* Render children — support both patterns */}
+      {isRenderProps ? children({ logViolation }) : children}
     </>
   )
 }
