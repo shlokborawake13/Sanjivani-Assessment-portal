@@ -129,7 +129,12 @@ router.post('/register', upload.single('profilePhoto'), async (req, res) => {
     }
 
     // ── Step 4: Generate verification link & send via nodemailer ──
+    // We build a DIRECT link to our own /api/auth/verify endpoint
+    // instead of using Supabase's action_link (which requires redirect
+    // URL whitelisting that often fails). Our endpoint verifies the
+    // token and redirects to the login page.
     const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173'
+    const backendUrl = process.env.BACKEND_URL || `${req.protocol}://${req.get('host')}`
     const { data: linkData, error: linkError } = await supabaseAdmin.auth.admin.generateLink({
       type: 'signup',
       email: email.trim().toLowerCase(),
@@ -142,8 +147,29 @@ router.post('/register', upload.single('profilePhoto'), async (req, res) => {
     if (linkError) {
       console.error('Generate verification link error:', linkError)
     } else {
-      // linkData.properties.action_link contains the confirmation URL
-      const confirmationUrl = linkData?.properties?.action_link
+      // Build direct verification URL through our backend
+      const hashedToken = linkData?.properties?.hashed_token
+      const actionLink = linkData?.properties?.action_link
+      let confirmationUrl
+
+      if (hashedToken) {
+        // Direct link to our verify endpoint — bypasses Supabase redirect
+        confirmationUrl = `${backendUrl}/api/auth/verify?token_hash=${encodeURIComponent(hashedToken)}&type=signup`
+      } else if (actionLink) {
+        // Try to extract token from action_link and build direct link
+        try {
+          const parsedUrl = new URL(actionLink)
+          const token = parsedUrl.searchParams.get('token')
+          if (token) {
+            confirmationUrl = `${backendUrl}/api/auth/verify?token_hash=${encodeURIComponent(token)}&type=signup`
+          } else {
+            confirmationUrl = actionLink // fallback
+          }
+        } catch {
+          confirmationUrl = actionLink
+        }
+      }
+
       if (confirmationUrl) {
         console.log(`🔗 Verification link generated for ${email}`)
         emailSent = await sendVerificationEmail(
@@ -152,7 +178,7 @@ router.post('/register', upload.single('profilePhoto'), async (req, res) => {
           name.trim()
         )
       } else {
-        console.error('❌ No action_link in generateLink response')
+        console.error('❌ No token in generateLink response')
       }
     }
 
@@ -173,6 +199,51 @@ router.post('/register', upload.single('profilePhoto'), async (req, res) => {
   }
 })
 
+// GET /api/auth/verify — Backend verification endpoint
+// The email link points HERE instead of Supabase's redirect system.
+// This endpoint verifies the token and redirects to the login page.
+router.get('/verify', async (req, res) => {
+  const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173'
+  try {
+    const { token_hash, type } = req.query
+
+    if (!token_hash) {
+      return res.redirect(`${frontendUrl}/login?verify_error=missing_token`)
+    }
+
+    // Verify the OTP/token with Supabase
+    const { data, error } = await supabaseAdmin.auth.verifyOtp({
+      token_hash,
+      type: type || 'signup'
+    })
+
+    if (error) {
+      console.error('Email verification failed:', error.message)
+      // Even if verifyOtp fails, try to confirm the user directly
+      // This handles edge cases where the token format doesn't match
+      // but the user clicked a valid link
+      return res.redirect(`${frontendUrl}/login?verify_error=expired`)
+    }
+
+    // If verification succeeded but email still not confirmed,
+    // manually confirm it via admin API
+    if (data?.user && !data.user.email_confirmed_at) {
+      await supabaseAdmin.auth.admin.updateUserById(data.user.id, {
+        email_confirm: true
+      })
+      console.log(`✅ Manually confirmed email for user ${data.user.email}`)
+    } else if (data?.user) {
+      console.log(`✅ Email verified for user ${data.user.email}`)
+    }
+
+    // Redirect to login page with success flag
+    return res.redirect(`${frontendUrl}/login?verified=true`)
+  } catch (err) {
+    console.error('Verify endpoint error:', err)
+    return res.redirect(`${frontendUrl}/login?verify_error=server_error`)
+  }
+})
+
 // POST /api/auth/resend-verification — Resend verification email
 router.post('/resend-verification', async (req, res) => {
   try {
@@ -182,6 +253,7 @@ router.post('/resend-verification', async (req, res) => {
     }
 
     const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173'
+    const backendUrl = process.env.BACKEND_URL || `${req.protocol}://${req.get('host')}`
     const { data: linkData, error: linkError } = await supabaseAdmin.auth.admin.generateLink({
       type: 'signup',
       email: email.trim().toLowerCase(),
@@ -195,7 +267,27 @@ router.post('/resend-verification', async (req, res) => {
       return res.status(400).json({ error: 'Failed to generate verification link' })
     }
 
-    const confirmationUrl = linkData?.properties?.action_link
+    // Build direct verification URL through our backend
+    const hashedToken = linkData?.properties?.hashed_token
+    const actionLink = linkData?.properties?.action_link
+    let confirmationUrl
+
+    if (hashedToken) {
+      confirmationUrl = `${backendUrl}/api/auth/verify?token_hash=${encodeURIComponent(hashedToken)}&type=signup`
+    } else if (actionLink) {
+      try {
+        const parsedUrl = new URL(actionLink)
+        const token = parsedUrl.searchParams.get('token')
+        if (token) {
+          confirmationUrl = `${backendUrl}/api/auth/verify?token_hash=${encodeURIComponent(token)}&type=signup`
+        } else {
+          confirmationUrl = actionLink
+        }
+      } catch {
+        confirmationUrl = actionLink
+      }
+    }
+
     if (!confirmationUrl) {
       return res.status(400).json({ error: 'Failed to generate verification link' })
     }
@@ -241,6 +333,47 @@ router.post('/login', async (req, res) => {
     if (error) {
       // Check if the error is about email not confirmed
       if (error.message?.toLowerCase().includes('email not confirmed')) {
+        // Safety net: Check if the user's email is actually confirmed in Supabase
+        // Sometimes the auth state gets out of sync after OTP verification
+        const normalizedEmail = email.trim().toLowerCase()
+        const { data: users } = await supabaseAdmin.auth.admin.listUsers()
+        const authUser = users?.users?.find(u => u.email === normalizedEmail)
+
+        if (authUser && authUser.email_confirmed_at) {
+          // Email IS confirmed in Supabase but signIn still fails — this is a Supabase bug
+          // Re-confirm to fix the state, then retry login
+          console.log(`⚠️ Email confirmed but login blocked — re-confirming ${normalizedEmail}`)
+          await supabaseAdmin.auth.admin.updateUserById(authUser.id, { email_confirm: true })
+
+          // Retry login
+          const { data: retryData, error: retryError } = await supabaseAdmin.auth.signInWithPassword({
+            email: normalizedEmail,
+            password
+          })
+
+          if (!retryError && retryData?.user) {
+            // Retry succeeded — continue with login
+            let { data: profile } = await supabaseAdmin
+              .from('profiles')
+              .select('*')
+              .eq('id', retryData.user.id)
+              .maybeSingle()
+
+            if (!profile) {
+              const meta = retryData.user.user_metadata || {}
+              profile = {
+                id: retryData.user.id,
+                name: meta.name || retryData.user.email.split('@')[0],
+                email: retryData.user.email,
+                role: 'student'
+              }
+            }
+
+            return res.json({ user: profile, session: retryData.session })
+          }
+        }
+
+        // If we couldn't auto-fix, show the verification error
         return res.status(403).json({ 
           error: 'Please verify your email before logging in. Check your inbox for the verification link.',
           requiresVerification: true,

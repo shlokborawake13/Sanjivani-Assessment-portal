@@ -21,6 +21,7 @@ export default function Login() {
   // Show success message when redirected after email verification or password reset
   const justVerified = searchParams.get('verified') === 'true'
   const justReset = searchParams.get('reset') === 'true'
+  const verifyError = searchParams.get('verify_error')
 
   const handleResendVerification = async () => {
     setResending(true)
@@ -94,6 +95,19 @@ export default function Login() {
             <div className="bg-[#dcfce7] rounded-lg px-4 py-3 mb-6 flex items-center gap-2 animate-fade-in">
               <CheckCircle2 size={16} className="text-[#166534] shrink-0" />
               <p className="text-sm text-[#166534] font-medium">Password reset successfully! Sign in with your new password.</p>
+            </div>
+          )}
+
+          {/* Verification error banner */}
+          {verifyError && (
+            <div className="bg-[#fef3c7] rounded-lg px-4 py-3 mb-6 animate-fade-in">
+              <p className="text-sm text-[#92400e] font-medium">
+                {verifyError === 'expired' 
+                  ? 'Your verification link has expired. Please request a new one below.'
+                  : verifyError === 'missing_token'
+                  ? 'Invalid verification link. Please request a new one.'
+                  : 'Verification failed. Please try again or request a new link.'}
+              </p>
             </div>
           )}
 
