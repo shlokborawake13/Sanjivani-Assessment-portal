@@ -10,28 +10,39 @@ export default function ResetPassword() {
   const [loading, setLoading] = useState(false)
   const [success, setSuccess] = useState(false)
   const [error, setError] = useState('')
-  const [accessToken, setAccessToken] = useState(null)
+  const [tokenData, setTokenData] = useState(null) // { type: 'hash'|'access', value: string }
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
 
-  // Extract access_token from URL hash fragment
-  // Supabase redirects with #access_token=xxx&type=recovery
+  // Extract token from URL — supports multiple formats
   useEffect(() => {
+    // Priority 1: ?token=xxx (hashed_token from our direct link — new approach)
+    const tokenFromQuery = searchParams.get('token')
+    const typeFromQuery = searchParams.get('type')
+    if (tokenFromQuery && typeFromQuery === 'recovery') {
+      setTokenData({ type: 'hash', value: tokenFromQuery })
+      return
+    }
+
+    // Priority 2: #access_token=xxx&type=recovery (Supabase redirect — legacy)
     const hash = window.location.hash
     if (hash) {
-      const params = new URLSearchParams(hash.substring(1))
-      const token = params.get('access_token')
-      const type = params.get('type')
-      if (token && type === 'recovery') {
-        setAccessToken(token)
-        // Clean up the URL
-        window.history.replaceState(null, '', window.location.pathname)
+      const hashParams = new URLSearchParams(hash.substring(1))
+      const accessToken = hashParams.get('access_token')
+      const hashType = hashParams.get('type')
+      if (accessToken && hashType === 'recovery') {
+        setTokenData({ type: 'access', value: accessToken })
+        // Clean up the URL hash
+        window.history.replaceState(null, '', window.location.pathname + window.location.search)
+        return
       }
     }
-    // Also check query params as fallback
-    const tokenFromQuery = searchParams.get('access_token')
-    if (tokenFromQuery) {
-      setAccessToken(tokenFromQuery)
+
+    // Priority 3: ?access_token=xxx (query param fallback)
+    const accessFromQuery = searchParams.get('access_token')
+    if (accessFromQuery) {
+      setTokenData({ type: 'access', value: accessFromQuery })
+      return
     }
   }, [searchParams])
 
@@ -47,17 +58,22 @@ export default function ResetPassword() {
       setError('Passwords do not match')
       return
     }
-    if (!accessToken) {
+    if (!tokenData) {
       setError('Invalid or expired reset link. Please request a new password reset.')
       return
     }
 
     setLoading(true)
     try {
-      await api.post('/auth/reset-password', {
-        access_token: accessToken,
-        new_password: newPassword
-      })
+      // Send the appropriate token field based on how we received it
+      const payload = { new_password: newPassword }
+      if (tokenData.type === 'hash') {
+        payload.token_hash = tokenData.value
+      } else {
+        payload.access_token = tokenData.value
+      }
+
+      await api.post('/auth/reset-password', payload)
       setSuccess(true)
       // Auto-redirect to login after 3 seconds
       setTimeout(() => navigate('/login?reset=true'), 3000)
@@ -119,7 +135,7 @@ export default function ResetPassword() {
                 Go to Login Now
               </Link>
             </div>
-          ) : !accessToken ? (
+          ) : !tokenData ? (
             /* No Token State */
             <div className="text-center animate-fade-in">
               <div className="w-16 h-16 rounded-full bg-error-container flex items-center justify-center mx-auto mb-6">

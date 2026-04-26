@@ -15,7 +15,8 @@ export default function Dashboard() {
   const [announcements, setAnnouncements] = useState([])
   const [stats, setStats] = useState(null)
   const [loading, setLoading] = useState(true)
-  const [streak, setStreak] = useState(0)
+  // Read streak directly from user profile (already updated by authStore checkin)
+  const streak = user?.current_streak || 0
 
   useEffect(() => {
     async function fetchData() {
@@ -35,11 +36,6 @@ export default function Dashboard() {
       }
     }
     fetchData()
-
-    // Get streak
-    api.post('/leaderboard/checkin')
-      .then(res => setStreak(res.data.streak || 0))
-      .catch(() => {})
   }, [])
 
   const totalAssessments = stats?.totalAttempts || 0

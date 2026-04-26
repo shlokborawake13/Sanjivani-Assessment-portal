@@ -365,9 +365,40 @@ router.post('/forgot-password', async (req, res) => {
       return res.status(500).json({ error: 'Failed to generate reset link' })
     }
 
-    const resetUrl = linkData?.properties?.action_link
+    // ─── Build a DIRECT link to the frontend reset-password page ───
+    // Instead of using Supabase's action_link (which goes through Supabase's
+    // auth server and requires /reset-password to be in the Redirect URLs
+    // whitelist), we extract the token from the link response and construct
+    // a direct link to our frontend with the token as a query parameter.
+    // This completely bypasses Supabase's redirect URL verification.
+    
+    // The generateLink response contains the user's access tokens we can use
+    const actionLink = linkData?.properties?.action_link
+    const hashedToken = linkData?.properties?.hashed_token
+
+    // Try to extract access token from action_link or use hashed_token
+    let resetUrl
+    if (hashedToken) {
+      // Build direct frontend link with hashed_token
+      resetUrl = `${frontendUrl}/reset-password?token=${encodeURIComponent(hashedToken)}&type=recovery`
+    } else if (actionLink) {
+      // Fallback: parse the action_link to extract token and build direct link
+      try {
+        const actionUrl = new URL(actionLink)
+        const token = actionUrl.searchParams.get('token')
+        if (token) {
+          resetUrl = `${frontendUrl}/reset-password?token=${encodeURIComponent(token)}&type=recovery`
+        } else {
+          // Last fallback — use action_link directly (may fail if redirect URL not whitelisted)
+          resetUrl = actionLink
+        }
+      } catch {
+        resetUrl = actionLink
+      }
+    }
+
     if (!resetUrl) {
-      console.error('❌ No action_link in recovery generateLink response')
+      console.error('❌ No action_link or hashed_token in recovery generateLink response')
       return res.status(500).json({ error: 'Failed to generate reset link' })
     }
 
@@ -391,28 +422,50 @@ router.post('/forgot-password', async (req, res) => {
   }
 })
 
-// POST /api/auth/reset-password — Reset password using access token
+// POST /api/auth/reset-password — Reset password using token
 router.post('/reset-password', async (req, res) => {
   try {
-    const { access_token, new_password } = req.body
+    const { access_token, token_hash, new_password } = req.body
 
-    if (!access_token) {
+    if (!access_token && !token_hash) {
       return res.status(400).json({ error: 'Reset token is required' })
     }
     if (!new_password || new_password.length < 6) {
       return res.status(400).json({ error: 'New password must be at least 6 characters' })
     }
 
-    // Verify the token and get the user
-    const { data: { user }, error: verifyError } = await supabaseAdmin.auth.getUser(access_token)
+    let userId = null
 
-    if (verifyError || !user) {
-      console.error('Reset token verification failed:', verifyError?.message)
-      return res.status(400).json({ error: 'Invalid or expired reset link. Please request a new one.' })
+    // Method 1: Verify via hashed_token (OTP-style — from generateLink)
+    if (token_hash) {
+      const { data: verifyData, error: verifyError } = await supabaseAdmin.auth.verifyOtp({
+        token_hash,
+        type: 'recovery'
+      })
+
+      if (verifyError || !verifyData?.user) {
+        console.error('OTP verification failed:', verifyError?.message)
+        return res.status(400).json({ error: 'Invalid or expired reset link. Please request a new one.' })
+      }
+      userId = verifyData.user.id
+    }
+    // Method 2: Verify via access_token (JWT-style — legacy/hash fragment flow)
+    else if (access_token) {
+      const { data: { user }, error: verifyError } = await supabaseAdmin.auth.getUser(access_token)
+
+      if (verifyError || !user) {
+        console.error('Reset token verification failed:', verifyError?.message)
+        return res.status(400).json({ error: 'Invalid or expired reset link. Please request a new one.' })
+      }
+      userId = user.id
+    }
+
+    if (!userId) {
+      return res.status(400).json({ error: 'Could not verify reset token' })
     }
 
     // Update password via admin API
-    const { error: updateError } = await supabaseAdmin.auth.admin.updateUserById(user.id, {
+    const { error: updateError } = await supabaseAdmin.auth.admin.updateUserById(userId, {
       password: new_password
     })
 
@@ -421,7 +474,7 @@ router.post('/reset-password', async (req, res) => {
       return res.status(500).json({ error: 'Failed to update password' })
     }
 
-    console.log(`✅ Password reset successful for user ${user.email}`)
+    console.log(`✅ Password reset successful for user ${userId}`)
     res.json({ message: 'Password reset successful! You can now login with your new password.' })
   } catch (err) {
     console.error('Reset password error:', err)

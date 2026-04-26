@@ -8,6 +8,7 @@ const useAuthStore = create((set, get) => ({
   role: JSON.parse(localStorage.getItem('sanjivani_user') || 'null')?.role || null,
   loading: false,
   error: null,
+  _lastLoginTime: 0, // Track when login happened to avoid duplicate checkins
 
   login: async (email, password) => {
     set({ loading: true, error: null })
@@ -24,11 +25,12 @@ const useAuthStore = create((set, get) => ({
         isAuthenticated: true,
         role: user.role,
         loading: false,
-        error: null
+        error: null,
+        _lastLoginTime: Date.now()
       })
       
-      // Record daily visit for streak
-      get().checkin()
+      // Fire checkin in background AFTER returning — don't block login
+      setTimeout(() => get().checkin(), 100)
 
       return { success: true, role: user.role }
     } catch (err) {
@@ -117,8 +119,11 @@ const useAuthStore = create((set, get) => ({
         localStorage.setItem('sanjivani_user', JSON.stringify(user))
         set({ user, role: user.role })
       }
-      // Record daily visit for streak
-      get().checkin()
+      // Only checkin if we didn't JUST login (avoid duplicate checkins)
+      const lastLogin = get()._lastLoginTime
+      if (Date.now() - lastLogin > 5000) {
+        get().checkin()
+      }
     } catch {
       // silently fail — don't log out on refresh failure
     }

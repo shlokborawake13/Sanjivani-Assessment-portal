@@ -5,8 +5,12 @@ const API_URL = import.meta.env.VITE_API_URL || '/api'
 const api = axios.create({
   baseURL: API_URL,
   headers: { 'Content-Type': 'application/json' },
-  timeout: 15000 // 15 second timeout
+  timeout: 30000 // 30 second timeout (Render free tier cold-starts can be slow)
 })
+
+// ─── In-flight GET request deduplication ───
+// If the same GET URL is requested while one is already pending, reuse the same promise
+const pendingRequests = new Map()
 
 // Attach auth token to every request
 api.interceptors.request.use((config) => {
@@ -35,8 +39,8 @@ api.interceptors.response.use(
 
     if (!config._retried && (isServerError || isNetworkError)) {
       config._retried = true
-      // Wait a short moment before retrying
-      await new Promise(resolve => setTimeout(resolve, 1000))
+      // Short delay before retry (500ms instead of 1000ms for faster recovery)
+      await new Promise(resolve => setTimeout(resolve, 500))
       return api(config)
     }
 
@@ -53,5 +57,24 @@ api.interceptors.response.use(
     return Promise.reject(error)
   }
 )
+
+// ─── Wrapper with GET deduplication ───
+const originalGet = api.get.bind(api)
+api.get = (url, config) => {
+  const cacheKey = typeof url === 'string' ? url : url.toString()
+
+  // If there's already an in-flight request for this URL, return the same promise
+  if (pendingRequests.has(cacheKey)) {
+    return pendingRequests.get(cacheKey)
+  }
+
+  const promise = originalGet(url, config)
+    .finally(() => {
+      pendingRequests.delete(cacheKey)
+    })
+
+  pendingRequests.set(cacheKey, promise)
+  return promise
+}
 
 export default api
