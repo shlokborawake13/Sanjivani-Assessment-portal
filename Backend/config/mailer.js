@@ -1,4 +1,8 @@
 import nodemailer from 'nodemailer'
+import dns from 'dns'
+
+// Force IPv4 DNS resolution globally (Render doesn't support IPv6 outbound)
+dns.setDefaultResultOrder('ipv4first')
 
 // ─── SMTP Configuration ─────────────────────────────────────
 // Uses Gmail SMTP by default. For production, switch to SendGrid/Resend.
@@ -10,7 +14,14 @@ const transporter = nodemailer.createTransport({
   auth: {
     user: process.env.SMTP_USER,
     pass: process.env.SMTP_PASS
-  }
+  },
+  // Force IPv4 — Render doesn't support IPv6 outbound connections
+  // Without this, Gmail SMTP resolves to IPv6 and fails with ENETUNREACH
+  family: 4,
+  // Increase timeouts for cloud environments (Render cold starts)
+  connectionTimeout: 30000, // 30s to establish connection
+  greetingTimeout: 30000,   // 30s for SMTP greeting
+  socketTimeout: 60000,     // 60s for socket operations
 })
 
 // ─── Verify SMTP connection on startup ──────────────────────
