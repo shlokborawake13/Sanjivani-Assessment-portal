@@ -109,10 +109,12 @@ router.get('/stats', async (req, res) => {
   }
 })
 
-// POST /api/results — Submit a result
-router.post('/', async (req, res) => {
+// POST /api/results — ADMIN ONLY: manually insert a result
+// Results are normally created by the attempts submit flow and communication finalize flow.
+// This endpoint is restricted to prevent score injection by students.
+router.post('/', roleGuard(['admin']), async (req, res) => {
   try {
-    const { assessment_id, assessment_title, category, score, total, duration } = req.body
+    const { assessment_id, assessment_title, category, score, total, duration, user_id } = req.body
 
     if (!assessment_title || !category || score === undefined || !total) {
       return res.status(400).json({ error: 'Missing required fields' })
@@ -124,7 +126,7 @@ router.post('/', async (req, res) => {
     const { data, error } = await supabaseAdmin
       .from('results')
       .insert({
-        user_id: req.user.id,
+        user_id: user_id || req.user.id,
         assessment_id: assessment_id || null,
         assessment_title,
         category,

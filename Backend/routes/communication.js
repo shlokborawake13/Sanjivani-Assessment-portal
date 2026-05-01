@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import { supabaseAdmin } from '../config/supabase.js'
 import { authenticate } from '../middleware/auth.js'
+import { roleGuard } from '../middleware/roleGuard.js'
 import { rateLimiter } from '../middleware/rateLimit.js'
 
 const router = Router()
@@ -13,13 +14,46 @@ const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GE
 const PER_QUESTION_DEFAULT_TIME = 600 // 10 minutes per question default
 const PLAGIARISM_SIMILARITY_THRESHOLD = 0.85
 
-// ─── In-memory session store (no extra migration needed) ────
-const sessionStore = new Map()
+// ─── DB-backed session store ────────────────────────────────
+// Sessions are persisted in the attempts table's `answers` column.
+// This replaces the old in-memory Map() which was lost on server restart.
 
-function getSession(id) { return sessionStore.get(id) || null }
-function setSession(id, data) {
-  sessionStore.set(id, data)
-  setTimeout(() => sessionStore.delete(id), 4 * 60 * 60 * 1000) // cleanup after 4h
+async function getSession(attemptId) {
+  try {
+    const { data } = await supabaseAdmin
+      .from('attempts')
+      .select('answers, metadata')
+      .eq('id', attemptId)
+      .maybeSingle()
+    if (!data) return null
+    // Rebuild session from DB state
+    const responses = {}
+    const timeTaken = {}
+    ;(data.answers || []).forEach(a => {
+      if (a.text_response) responses[a.question_id] = a.text_response
+      if (a.time_taken) timeTaken[a.question_id] = a.time_taken
+    })
+    return { responses, timeTaken }
+  } catch {
+    return null
+  }
+}
+
+async function saveSessionToDb(attemptId, session) {
+  try {
+    const answersArray = Object.entries(session.responses).map(([qid, text]) => ({
+      question_id: qid,
+      selected: text ? 'A' : null,
+      text_response: text,
+      time_taken: session.timeTaken[qid] || 0,
+    }))
+    await supabaseAdmin
+      .from('attempts')
+      .update({ answers: answersArray })
+      .eq('id', attemptId)
+  } catch (err) {
+    console.error('Session save error:', err.message)
+  }
 }
 
 // ─── Gemini AI Evaluation ───────────────────────────────────
@@ -179,7 +213,7 @@ function calculateSimilarity(a, b) {
 
 // ─── POST /session/start ────────────────────────────────────
 
-router.post('/session/start', async (req, res) => {
+router.post('/session/start', roleGuard(['student']), async (req, res) => {
   try {
     const { assessment_id } = req.body
     if (!assessment_id) return res.status(400).json({ error: 'assessment_id is required' })
@@ -255,7 +289,7 @@ router.post('/session/start', async (req, res) => {
       return res.status(500).json({ error: 'Failed to create session: ' + (createErr?.message || 'unknown') })
     }
 
-    setSession(attempt.id, { responses: {}, timeTaken: {} })
+    // Session initialized — DB already has empty answers array from insert
 
     res.status(201).json({
       sessionId: attempt.id,
@@ -319,6 +353,7 @@ router.get('/session/:sessionId/questions', async (req, res) => {
 
 router.post(
   '/session/:sessionId/answer',
+  roleGuard(['student']),
   rateLimiter({ windowMs: 60000, max: 30, message: 'Too many submissions. Please wait.' }),
   async (req, res) => {
     try {
@@ -329,7 +364,7 @@ router.post(
 
       const { data: attempt } = await supabaseAdmin
         .from('attempts')
-        .select('id, user_id, status')
+        .select('id, user_id, status, answers')
         .eq('id', sessionId)
         .maybeSingle()
 
@@ -337,24 +372,15 @@ router.post(
       if (attempt.user_id !== req.user.id) return res.status(403).json({ error: 'Not authorized' })
       if (attempt.status !== 'in_progress') return res.status(400).json({ error: 'Session already submitted' })
 
-      const session = getSession(sessionId)
-      if (!session) return res.status(400).json({ error: 'Session expired — please restart' })
+      // Rebuild session from DB
+      const session = await getSession(sessionId) || { responses: {}, timeTaken: {} }
 
       // Save response in session
       session.responses[question_id] = text_response || ''
       session.timeTaken[question_id] = Math.max(0, parseInt(time_taken) || 0)
 
       // Persist to DB
-      const answersArray = Object.entries(session.responses).map(([qid, text]) => ({
-        question_id: qid,
-        selected: text ? 'A' : null,
-        text_response: text,
-      }))
-
-      await supabaseAdmin
-        .from('attempts')
-        .update({ answers: answersArray })
-        .eq('id', sessionId)
+      await saveSessionToDb(sessionId, session)
 
       res.json({
         accepted: true,
@@ -371,7 +397,7 @@ router.post(
 
 // ─── POST /session/:sessionId/finalize ──────────────────────
 
-router.post('/session/:sessionId/finalize', async (req, res) => {
+router.post('/session/:sessionId/finalize', roleGuard(['student']), async (req, res) => {
   try {
     const { sessionId } = req.params
     const { submission_reason } = req.body
@@ -386,9 +412,10 @@ router.post('/session/:sessionId/finalize', async (req, res) => {
     if (attempt.user_id !== req.user.id) return res.status(403).json({ error: 'Not authorized' })
     if (attempt.status !== 'in_progress') return res.status(400).json({ error: 'Session already submitted' })
 
-    const session = getSession(sessionId) || { responses: {}, timeTaken: {} }
+    // Always rebuild session from DB (no in-memory dependency)
+    const session = await getSession(sessionId) || { responses: {}, timeTaken: {} }
 
-    // Rebuild responses from attempt if session expired
+    // Fallback: rebuild from attempt.answers if getSession returned empty
     if (Object.keys(session.responses).length === 0 && attempt.answers?.length > 0) {
       attempt.answers.forEach(a => {
         if (a.text_response) session.responses[a.question_id] = a.text_response
@@ -538,8 +565,7 @@ router.post('/session/:sessionId/finalize', async (req, res) => {
         .eq('id', attempt.user_id)
     } catch (e) { /* non-fatal */ }
 
-    // Cleanup session
-    sessionStore.delete(sessionId)
+    // Session data is in DB — no cleanup needed
 
     res.json({
       score: answeredCount,

@@ -44,7 +44,7 @@ export default function ManagerResults() {
                 <span className="text-xs text-primary font-medium">{r.profiles?.name || 'Unknown'}</span>
                 <span className="text-[10px] bg-surface-high px-2 py-0.5 rounded-full text-on-surface-variant">{r.category}</span>
                 <span className="flex items-center gap-1 text-xs text-on-surface-variant"><Clock size={11} />{r.duration}</span>
-                <span className="text-xs text-on-surface-variant">{new Date(r.completed_at).toLocaleDateString()}</span>
+                <span className="text-xs text-on-surface-variant">{r.completed_at ? new Date(r.completed_at).toLocaleDateString() : '—'}</span>
               </div>
             </div>
             <div className="flex items-center gap-4">

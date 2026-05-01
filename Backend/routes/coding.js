@@ -31,26 +31,28 @@ async function ensureTable() {
     const { error } = await supabaseAdmin.from('code_submissions').select('id').limit(1)
     if (error && error.message.includes('does not exist')) {
       console.log('Creating code_submissions table...')
-      await supabaseAdmin.rpc('exec_sql', {
-        sql: `CREATE TABLE IF NOT EXISTS code_submissions (
-          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-          attempt_id UUID REFERENCES attempts(id) ON DELETE CASCADE,
-          question_id UUID REFERENCES questions(id) ON DELETE CASCADE,
-          user_id UUID REFERENCES profiles(id) ON DELETE CASCADE,
-          code TEXT NOT NULL,
-          language TEXT NOT NULL DEFAULT 'javascript',
-          passed_tests INTEGER DEFAULT 0,
-          total_tests INTEGER DEFAULT 0,
-          score INTEGER DEFAULT 0,
-          time_taken INTEGER DEFAULT 0,
-          speed_flagged BOOLEAN DEFAULT false,
-          status TEXT DEFAULT 'pending',
-          execution_results JSONB DEFAULT '[]',
-          created_at TIMESTAMPTZ DEFAULT NOW()
-        );`
-      }).catch(() => {
+      try {
+        await supabaseAdmin.rpc('exec_sql', {
+          sql: `CREATE TABLE IF NOT EXISTS code_submissions (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            attempt_id UUID REFERENCES attempts(id) ON DELETE CASCADE,
+            question_id UUID REFERENCES questions(id) ON DELETE CASCADE,
+            user_id UUID REFERENCES profiles(id) ON DELETE CASCADE,
+            code TEXT NOT NULL,
+            language TEXT NOT NULL DEFAULT 'javascript',
+            passed_tests INTEGER DEFAULT 0,
+            total_tests INTEGER DEFAULT 0,
+            score INTEGER DEFAULT 0,
+            time_taken INTEGER DEFAULT 0,
+            speed_flagged BOOLEAN DEFAULT false,
+            status TEXT DEFAULT 'pending',
+            execution_results JSONB DEFAULT '[]',
+            created_at TIMESTAMPTZ DEFAULT NOW()
+          );`
+        })
+      } catch {
         console.log('Note: Run migration_v5.sql in Supabase SQL Editor to create code_submissions table')
-      })
+      }
     }
     tableChecked = true
   } catch (e) {

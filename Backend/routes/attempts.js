@@ -193,57 +193,6 @@ router.post('/', async (req, res) => {
   }
 })
 
-// ─── GET /api/attempts/:id/restore — Resume from localStorage ────
-router.get('/:id/restore', async (req, res) => {
-  try {
-    const { data: attempt, error: fetchErr } = await supabaseAdmin
-      .from('attempts')
-      .select('*, assessments(*)')
-      .eq('id', req.params.id)
-      .maybeSingle()
-
-    if (fetchErr || !attempt) return res.status(404).json({ error: 'Attempt not found' })
-    if (attempt.user_id !== req.user.id) return res.status(403).json({ error: 'Not authorized' })
-
-    // Check if invalidated
-    if (attempt.invalidated) {
-      return res.json({ expired: true, reason: 'Attempt has been invalidated' })
-    }
-
-    // Check if already submitted
-    if (attempt.status !== 'in_progress') {
-      return res.json({ expired: true, reason: 'Attempt already submitted' })
-    }
-
-    // Check if time expired
-    const now = new Date()
-    if (attempt.end_time && now > new Date(attempt.end_time)) {
-      await autoSubmitAttempt(attempt.id, attempt.assessment_id, 'Timer expired (server-side)')
-      return res.json({ expired: true, reason: 'Timer expired' })
-    }
-
-    // Load questions for the active attempt
-    const assessment = attempt.assessments
-    const questions = await loadQuestions(attempt.assessment_id, assessment)
-
-    res.json({
-      attempt: {
-        id: attempt.id,
-        answers: attempt.answers,
-        start_time: attempt.start_time,
-        end_time: attempt.end_time,
-        violation_count: attempt.violation_count,
-        status: attempt.status,
-      },
-      questions,
-      exam: sanitizeAssessment(assessment),
-      resumed: true,
-    })
-  } catch (err) {
-    console.error('Restore attempt error:', err)
-    res.status(500).json({ error: 'Failed to restore attempt' })
-  }
-})
 
 // ─── POST /api/attempts/:id/save-progress — Auto-save ───
 router.post('/:id/save-progress', async (req, res) => {
@@ -472,14 +421,15 @@ router.post('/:id/violation', async (req, res) => {
     }
 
     // Insert violation record
-    await supabaseAdmin
-      .from('violations')
-      .insert({
-        attempt_id: req.params.id,
-        type,
-        details: details || ''
-      })
-      .catch(() => {}) // non-fatal if violations table has issues
+    try {
+      await supabaseAdmin
+        .from('violations')
+        .insert({
+          attempt_id: req.params.id,
+          type,
+          details: details || ''
+        })
+    } catch {} // non-fatal if violations table has issues
 
     // Update attempt warnings log
     const warningsLog = attempt.warnings_log || []
@@ -586,9 +536,6 @@ router.get('/', async (req, res) => {
 // ─── GET /api/attempts/:id — Get attempt details ────────
 router.get('/:id', async (req, res) => {
   try {
-    // Avoid conflict with /restore route
-    if (req.params.id === 'restore') return
-
     const { data: attempt, error } = await supabaseAdmin
       .from('attempts')
       .select('*, assessments(title, category, duration, duration_minutes), violations(*)')
@@ -725,7 +672,7 @@ async function autoSubmitAttempt(attemptId, assessmentId, reason) {
     const resultStatus = percentage >= passingMarks ? 'passed' : 'failed'
     const resultCategory = attempt.assessments?.category || 'General'
 
-    await supabaseAdmin.from('results').insert({
+    try { await supabaseAdmin.from('results').insert({
       user_id: attempt.user_id,
       assessment_id: aId,
       assessment_title: attempt.assessments?.title || 'Unknown',
@@ -735,7 +682,7 @@ async function autoSubmitAttempt(attemptId, assessmentId, reason) {
       percentage,
       status: resultStatus,
       duration: ''
-    }).catch(() => {})
+    }) } catch {}
 
     // Update profile scores
     try {

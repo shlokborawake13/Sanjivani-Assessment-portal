@@ -361,7 +361,7 @@ router.post('/:id/upload-csv', roleGuard('admin', 'manager'), upload.single('fil
     // Verify assessment exists
     const { data: assessment } = await supabaseAdmin
       .from('assessments')
-      .select('id')
+      .select('id, assessment_type')
       .eq('id', req.params.id)
       .maybeSingle()
 
@@ -374,21 +374,68 @@ router.post('/:id/upload-csv', roleGuard('admin', 'manager'), upload.single('fil
       return res.status(400).json({ error: 'CSV file is empty or has invalid format' })
     }
 
-    // Map CSV rows to question records
-    const questions = rows.map((row, idx) => ({
-      assessment_id: req.params.id,
-      question_text: row.question_text || row.question || '',
-      option_a: row.option_a || row.a || '',
-      option_b: row.option_b || row.b || '',
-      option_c: row.option_c || row.c || '',
-      option_d: row.option_d || row.d || '',
-      correct_answer: (row.correct_answer || row.answer || 'A').toUpperCase(),
-      question_type: row.question_type || row.type || 'mcq',
-      difficulty: row.difficulty || 'Intermediate',
-      explanation: row.explanation || '',
-      topic: row.topic || 'General',
-      sort_order: idx
-    })).filter(q => q.question_text.length > 0)
+    // ─── Row-level validation ───
+    const errors = []
+    const validAnswerKeys = ['A', 'B', 'C', 'D']
+
+    const questions = rows.map((row, idx) => {
+      const rowNum = idx + 2 // +2 because header is row 1, data starts at row 2
+      const qText = row.question_text || row.question || ''
+
+      // Validate question text
+      if (!qText.trim()) {
+        errors.push({ row: rowNum, column: 'question_text', value: '', message: 'Question text is required' })
+      }
+
+      // Validate options for MCQ type
+      const qType = row.question_type || row.type || 'mcq'
+      if (qType === 'mcq') {
+        const optA = row.option_a || row.a || ''
+        const optB = row.option_b || row.b || ''
+        if (!optA.trim()) errors.push({ row: rowNum, column: 'option_a', value: '', message: 'Option A is required for MCQ' })
+        if (!optB.trim()) errors.push({ row: rowNum, column: 'option_b', value: '', message: 'Option B is required for MCQ' })
+
+        // Validate correct_answer
+        const answer = (row.correct_answer || row.answer || '').toUpperCase().trim()
+        if (!answer) {
+          errors.push({ row: rowNum, column: 'correct_answer', value: row.correct_answer || '', message: 'Correct answer is required' })
+        } else if (!validAnswerKeys.includes(answer)) {
+          errors.push({ row: rowNum, column: 'correct_answer', value: answer, message: `Invalid answer "${answer}". Must be one of: A, B, C, D` })
+        }
+      }
+
+      // Validate difficulty if present
+      const validDifficulties = ['Easy', 'Intermediate', 'Hard']
+      const difficulty = row.difficulty || 'Intermediate'
+      if (row.difficulty && !validDifficulties.includes(difficulty)) {
+        errors.push({ row: rowNum, column: 'difficulty', value: difficulty, message: `Invalid difficulty "${difficulty}". Must be: Easy, Intermediate, or Hard` })
+      }
+
+      return {
+        assessment_id: req.params.id,
+        question_text: qText,
+        option_a: row.option_a || row.a || '',
+        option_b: row.option_b || row.b || '',
+        option_c: row.option_c || row.c || '',
+        option_d: row.option_d || row.d || '',
+        correct_answer: (row.correct_answer || row.answer || 'A').toUpperCase(),
+        question_type: qType,
+        difficulty: validDifficulties.includes(difficulty) ? difficulty : 'Intermediate',
+        explanation: row.explanation || '',
+        topic: row.topic || 'General',
+        sort_order: idx
+      }
+    }).filter(q => q.question_text.trim().length > 0)
+
+    // If there are validation errors, return them without inserting
+    if (errors.length > 0) {
+      return res.status(400).json({
+        error: `Validation failed: ${errors.length} issue(s) found in CSV`,
+        errors,
+        validRowCount: questions.length,
+        totalRows: rows.length
+      })
+    }
 
     if (questions.length === 0) {
       return res.status(400).json({ error: 'No valid questions found in CSV. Required column: question_text' })

@@ -396,7 +396,7 @@ export default function TakeAssessment() {
   const answeredCount = Object.keys(answers).length
   const isLowTime = remainingSeconds <= 120 && remainingSeconds > 0
 
-  const content = (
+  const examContent = (
     <div className="min-h-screen bg-[#0a0a0f] text-white flex flex-col">
       {/* ─── Header ─── */}
       <header className="bg-[#1a1a2e]/90 backdrop-blur-xl border-b border-white/5 sticky top-0 z-50 px-4 py-3">
@@ -683,7 +683,7 @@ export default function TakeAssessment() {
           </>
         )}
 
-        {content}
+        {examContent}
       </StrictModeWrapper>
     </FullscreenHandler>
   )

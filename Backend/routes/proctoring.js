@@ -305,7 +305,7 @@ router.post(
           severity: v.severity,
           source: 'server'
         }))
-        await supabaseAdmin.from('violations').insert(records).catch(() => {})
+        try { await supabaseAdmin.from('violations').insert(records) } catch {}
         state.totalViolations += violations.length
       }
 
@@ -322,24 +322,25 @@ router.post(
       }
 
       // ── Update proctoring session in DB ──
-      await supabaseAdmin
-        .from('proctoring_sessions')
-        .update({
-          camera_active: !!camera_active,
-          mic_active: !!mic_active,
-          fullscreen_active: fullscreen_active !== false,
-          face_detected: !!face_detected,
-          face_count: parseInt(face_count) || 0,
-          audio_level: parseFloat(audio_level) || 0,
-          last_heartbeat: new Date().toISOString(),
-          heartbeat_count: (state.heartbeatCount || 0) + 1,
-          is_suspicious: state.totalViolations > 0,
-          suspicious_reasons: violations.length > 0
-            ? violations.map(v => ({ type: v.type, at: new Date().toISOString() }))
-            : undefined
-        })
-        .eq('id', state.sessionId)
-        .catch(() => {})
+      try {
+        await supabaseAdmin
+          .from('proctoring_sessions')
+          .update({
+            camera_active: !!camera_active,
+            mic_active: !!mic_active,
+            fullscreen_active: fullscreen_active !== false,
+            face_detected: !!face_detected,
+            face_count: parseInt(face_count) || 0,
+            audio_level: parseFloat(audio_level) || 0,
+            last_heartbeat: new Date().toISOString(),
+            heartbeat_count: (state.heartbeatCount || 0) + 1,
+            is_suspicious: state.totalViolations > 0,
+            suspicious_reasons: violations.length > 0
+              ? violations.map(v => ({ type: v.type, at: new Date().toISOString() }))
+              : undefined
+          })
+          .eq('id', state.sessionId)
+      } catch {}
 
       state.heartbeatCount = (state.heartbeatCount || 0) + 1
       setLiveState(attemptId, state)
@@ -538,13 +539,13 @@ export function startHeartbeatMonitor() {
           await serverAutoSubmit(attemptId, `Missed ${state.missedHeartbeats} heartbeats`)
             .catch(e => console.error('Heartbeat monitor auto-submit error:', e.message))
         } else {
-          await supabaseAdmin.from('violations').insert({
+          try { await supabaseAdmin.from('violations').insert({
             attempt_id: attemptId,
             type: 'heartbeat_timeout',
             details: `No heartbeat for ${Math.round(elapsed / 1000)}s (miss #${state.missedHeartbeats})`,
             severity: 'major',
             source: 'server'
-          }).catch(() => {})
+          }) } catch {}
           setLiveState(attemptId, state)
         }
       }
@@ -617,7 +618,7 @@ async function serverAutoSubmit(attemptId, reason) {
     // Save result
     const passingMarks = attempt.assessments?.passing_marks || 50
     const resultStatus = percentage >= passingMarks ? 'passed' : 'failed'
-    await supabaseAdmin.from('results').insert({
+    try { await supabaseAdmin.from('results').insert({
       user_id: attempt.user_id,
       assessment_id: attempt.assessment_id,
       assessment_title: attempt.assessments?.title || 'Unknown',
@@ -627,7 +628,7 @@ async function serverAutoSubmit(attemptId, reason) {
       percentage,
       status: resultStatus,
       duration: ''
-    }).catch(() => {})
+    }) } catch {}
 
     console.log(`🔒 [PROCTOR] Auto-submitted attempt ${attemptId}: ${reason}`)
   } catch (err) {

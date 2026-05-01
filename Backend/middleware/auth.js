@@ -1,4 +1,4 @@
-import { supabaseAdmin } from '../config/supabase.js'
+import { supabaseAdmin, supabaseAuth } from '../config/supabase.js'
 
 // ─── In-memory profile cache (30s TTL) ───
 // Eliminates 1 DB call per request for recently authenticated users
@@ -29,6 +29,9 @@ function setCachedProfile(userId, profile) {
  * Authentication middleware.
  * Extracts JWT from Authorization header, verifies it via Supabase,
  * and attaches user + profile to req.user.
+ * 
+ * IMPORTANT: Uses supabaseAuth (not supabaseAdmin) for getUser() to
+ * prevent contaminating the admin client's service_role session.
  */
 export async function authenticate(req, res, next) {
   try {
@@ -39,8 +42,8 @@ export async function authenticate(req, res, next) {
 
     const token = authHeader.split(' ')[1]
 
-    // Verify JWT with Supabase
-    const { data: { user }, error } = await supabaseAdmin.auth.getUser(token)
+    // Verify JWT with dedicated auth client (NOT supabaseAdmin!)
+    const { data: { user }, error } = await supabaseAuth.auth.getUser(token)
     if (error || !user) {
       return res.status(401).json({ error: 'Invalid or expired token' })
     }

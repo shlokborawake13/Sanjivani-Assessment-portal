@@ -1,6 +1,6 @@
 import { Router } from 'express'
 import multer from 'multer'
-import { supabaseAdmin, supabaseUrl } from '../config/supabase.js'
+import { supabaseAdmin, supabaseAuth, supabaseUrl } from '../config/supabase.js'
 import { sendVerificationEmail, sendPasswordResetEmail } from '../config/mailer.js'
 
 const router = Router()
@@ -212,7 +212,7 @@ router.get('/verify', async (req, res) => {
     }
 
     // Verify the OTP/token with Supabase
-    const { data, error } = await supabaseAdmin.auth.verifyOtp({
+    const { data, error } = await supabaseAuth.auth.verifyOtp({
       token_hash,
       type: type || 'signup'
     })
@@ -325,7 +325,7 @@ router.post('/login', async (req, res) => {
       return res.status(400).json({ error: 'Email and password are required' })
     }
 
-    const { data, error } = await supabaseAdmin.auth.signInWithPassword({
+    const { data, error } = await supabaseAuth.auth.signInWithPassword({
       email: email.trim().toLowerCase(),
       password
     })
@@ -346,7 +346,7 @@ router.post('/login', async (req, res) => {
           await supabaseAdmin.auth.admin.updateUserById(authUser.id, { email_confirm: true })
 
           // Retry login
-          const { data: retryData, error: retryError } = await supabaseAdmin.auth.signInWithPassword({
+          const { data: retryData, error: retryError } = await supabaseAuth.auth.signInWithPassword({
             email: normalizedEmail,
             password
           })
@@ -444,7 +444,7 @@ router.get('/me', async (req, res) => {
       return res.status(401).json({ error: 'Not authenticated' })
     }
     const token = authHeader.split(' ')[1]
-    const { data: { user }, error } = await supabaseAdmin.auth.getUser(token)
+    const { data: { user }, error } = await supabaseAuth.auth.getUser(token)
     if (error || !user) {
       return res.status(401).json({ error: 'Invalid token' })
     }
@@ -571,7 +571,7 @@ router.post('/reset-password', async (req, res) => {
 
     // Method 1: Verify via hashed_token (OTP-style — from generateLink)
     if (token_hash) {
-      const { data: verifyData, error: verifyError } = await supabaseAdmin.auth.verifyOtp({
+      const { data: verifyData, error: verifyError } = await supabaseAuth.auth.verifyOtp({
         token_hash,
         type: 'recovery'
       })
@@ -584,7 +584,7 @@ router.post('/reset-password', async (req, res) => {
     }
     // Method 2: Verify via access_token (JWT-style — legacy/hash fragment flow)
     else if (access_token) {
-      const { data: { user }, error: verifyError } = await supabaseAdmin.auth.getUser(access_token)
+      const { data: { user }, error: verifyError } = await supabaseAuth.auth.getUser(access_token)
 
       if (verifyError || !user) {
         console.error('Reset token verification failed:', verifyError?.message)
